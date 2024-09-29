@@ -11,3 +11,598 @@ FROM
 WHERE website_pageview_id < 1000
 GROUP BY pageview_url
 ORDER BY 2 DESC
+----------------------------------------------------------------------
+Find the entry page
+USE mavenfuzzyfactory;
+
+
+CREATE TEMPORARY TABLE first_pageview
+SELECT
+	website_session_id,
+    MIN(website_pageview_id) AS min_pageview_id
+FROM 
+	website_pageviews
+WHERE
+	website_pageview_id < 1000
+GROUP BY 
+	website_session_id;
+    
+SELECT 
+    website_pageviews.pageview_url AS landing_page,
+    COUNT(DISTINCT first_pageview.website_session_id) AS sessions_hitting_this_lander
+FROM first_pageview
+	LEFT JOIN website_pageviews
+    ON website_pageview_id = first_pageview.min_pageview_id
+GROUP BY
+	website_pageviews.pageview_url
+
+
+-------------------------------------------------------------------------
+Most viewed website pages, ranked by sessions volume
+
+SELECT 
+	pageview_url,
+    COUNT(DISTINCT website_pageview_id) AS pageview_sessions
+FROM 
+	website_pageviews
+WHERE
+	created_at <'2012-06-09'
+GROUP BY
+	pageview_url
+ORDER BY
+	2 DESC
+
+--------------------------------------------------------------------------
+Top entry pages
+
+CREATE TEMPORARY TABLE entry_page
+SELECT
+	website_session_id,
+    MIN(website_pageview_id) AS min_view_id
+FROM
+	website_pageviews
+WHERE
+	created_at < '2012-06-12'
+GROUP BY 
+	website_session_id;
+
+SELECT *
+FROM entry_page;
+
+SELECT
+	website_pageviews.pageview_url AS landing_page,
+	COUNT(DISTINCT min_view_id) AS sessions_hitting_this_landing_page
+FROM
+	entry_page
+    LEFT JOIN website_pageviews
+    ON website_pageviews.website_pageview_id=entry_page.min_view_id
+GROUP BY 
+	landing_page
+ORDER BY
+	2 DESC
+--------------------------------------------------------------------------
+Bounce Rate
+
+USE mavenfuzzyfactory;
+-- Bounce rate
+-- step 1: create temporary table, find each session's landing page.
+-- 			session_id--minmum_pageview_id
+-- step 2: minimun_pageview_id--landing_page
+-- step 3: count each session's pageviews (how many pages)
+-- step 4: bounce rate
+
+
+SELECT
+	website_pageviews.website_session_id,
+    MIN(website_pageviews.website_pageview_id) AS first_pageview_id
+FROM
+	website_pageviews
+    LEFT JOIN website_sessions
+    ON website_sessions.website_session_id=website_pageviews.website_session_id
+WHERE
+	website_sessions.created_at BETWEEN '2014-01-01' AND '2014-02-01'
+GROUP BY 
+	website_pageviews.website_session_id;
+
+-- 
+
+CREATE TEMPORARY TABLE first_pageviews
+SELECT
+	website_pageviews.website_session_id,
+    MIN(website_pageviews.website_pageview_id) AS first_pageview_id
+FROM
+	website_pageviews
+    LEFT JOIN website_sessions
+    ON website_sessions.website_session_id=website_pageviews.website_session_id
+WHERE
+	website_sessions.created_at BETWEEN '2014-01-01' AND '2014-02-01'
+GROUP BY 
+	website_pageviews.website_session_id;
+
+SELECT * 
+FROM first_pageviews;
+
+-- first_pageview to landing_page
+CREATE TEMPORARY TABLE sessions_w_landing_page
+SELECT 
+	first_pageviews.website_session_id,
+	website_pageviews.pageview_url AS landing_page
+FROM
+	first_pageviews
+    LEFT JOIN website_pageviews
+	ON website_pageviews.website_pageview_id=first_pageviews.first_pageview_id;
+
+-- pageviews per session
+-- all sessions to bounced sessions
+
+SELECT *
+FROM sessions_w_landing_page;
+
+SELECT
+	sessions_w_landing_page.website_session_id,
+    sessions_w_landing_page.landing_page,
+    COUNT(DISTINCT website_pageviews.website_session_id) AS pps
+FROM
+	sessions_w_landing_page
+    LEFT JOIN website_pageviews
+	ON website_pageviews.website_session_id=sessions_w_landing_page.website_session_id
+GROUP BY 
+	sessions_w_landing_page.website_session_id;
+
+CREATE TEMPORARY TABLE bounce_sessions
+SELECT
+	sessions_w_landing_page.website_session_id,
+    sessions_w_landing_page.landing_page,
+    COUNT(DISTINCT website_pageviews.website_pageview_id) AS pps
+FROM
+	sessions_w_landing_page
+    LEFT JOIN website_pageviews
+	ON website_pageviews.website_session_id=sessions_w_landing_page.website_session_id
+GROUP BY 
+	sessions_w_landing_page.website_session_id,
+    sessions_w_landing_page.landing_page
+HAVING 
+	pps=1;
+
+SELECT * FROM bounce_sessions;
+
+SELECT
+	sessions_w_landing_page.website_session_id,
+    sessions_w_landing_page.landing_page,
+    bounce_sessions.website_session_id AS bounced_session_id
+FROM
+	sessions_w_landing_page
+    LEFT JOIN bounce_sessions
+    ON sessions_w_landing_page.website_session_id=bounce_sessions.website_session_id
+ORDER BY
+	sessions_w_landing_page.website_session_id;
+    
+-- final output to count bounce rate which is based on landing page
+-- bounce rate=bounce sessions/sessions
+
+SELECT
+	sessions_w_landing_page.landing_page,
+    COUNT(DISTINCT sessions_w_landing_page.website_session_id) AS sessions,
+    COUNT(DISTINCT bounce_sessions.website_session_id) AS bounced_sessions,
+    COUNT(DISTINCT bounce_sessions.website_session_id)/COUNT(DISTINCT sessions_w_landing_page.website_session_id) AS bounce_rate
+FROM
+	sessions_w_landing_page
+    LEFT JOIN bounce_sessions
+    ON sessions_w_landing_page.website_session_id=bounce_sessions.website_session_id
+GROUP BY 
+	sessions_w_landing_page.landing_page
+ORDER BY
+	sessions_w_landing_page.website_session_id
+
+
+--------------------------------------------------------------------------
+-- Landing pages testing (A/B testing)
+-- 1. lander/1 fist pageview
+-- 2. first website_pageview_id and its revelant sessions
+-- 3. landing page of each session
+-- 4. count of pages per session
+-- 5. summarizing total sessions and bounce sessions 
+
+-- 1. lander/1 fist pageview
+SELECT
+	website_pageviews.pageview_url,
+    MIN(website_pageviews.created_at) AS first_created_at,
+    MIN(website_pageviews.website_pageview_id) AS first_pageview_id
+FROM
+	website_pageviews
+WHERE
+	website_pageviews.pageview_url='/lander-1';
+
+-- first_created_at '2012-06-19 00:35:54'
+-- first_pageview_id '23504'
+
+
+-- 2.
+-- gsearch+nonbrand first view session
+
+
+CREATE TEMPORARY TABLE first_test_pageviews
+SELECT
+	website_pageviews.website_session_id,
+    MIN(website_pageview_id) AS min_view_id
+FROM
+	website_pageviews
+	INNER JOIN website_sessions 
+    ON website_sessions.website_session_id=website_pageviews.website_session_id
+    AND website_pageviews.created_at < '2012-07-28'
+    AND website_pageviews.website_pageview_id > '23504'
+    AND utm_source = 'gsearch'
+    AND utm_campaign = 'nonbrand'
+    -- inner join is to make sure only pulling data for pageviews where a corresponding session exists in the website_sessions table
+    -- where the session meets the additional filtering criteria (utm_)
+GROUP BY
+	website_pageviews.website_session_id;
+
+-- 3. bring in landing page to each session
+
+CREATE TEMPORARY TABLE test_sessions_lp
+SELECT
+	first_test_pageviews.website_session_id,
+    website_pageviews.pageview_url AS landing_page
+FROM
+	first_test_pageviews
+    LEFT JOIN website_pageviews
+    ON first_test_pageviews.min_view_id = website_pageviews.website_pageview_id
+WHERE
+	website_pageviews.pageview_url IN ('/home','/lander-1');
+
+-- count of pages per session, then limit to only bounce sessions
+CREATE TEMPORARY TABLE test_bounce_sessions
+SELECT
+	test_sessions_lp.website_session_id,
+    test_sessions_lp.landing_page,
+    COUNT(DISTINCT website_pageviews.website_pageview_id) AS pps
+FROM
+	test_sessions_lp
+    LEFT JOIN website_pageviews
+    ON website_pageviews.website_session_id=test_sessions_lp.website_session_id
+GROUP BY 
+	test_sessions_lp.website_session_id,
+    test_sessions_lp.landing_page
+HAVING
+	pps = 1;
+
+SELECT * FROM test_bounce_sessions;
+
+-- just to see the bounced sessions
+SELECT 
+	test_sessions_lp.landing_page,
+    test_sessions_lp.website_session_id,
+    test_bounce_sessions.website_session_id AS bounced_website_session_id
+FROM
+	test_sessions_lp
+    LEFT JOIN test_bounce_sessions
+    ON test_sessions_lp.website_session_id = test_bounce_sessions.website_session_id
+ORDER BY 
+	test_sessions_lp.website_session_id;
+ 
+ 
+-- finally output
+
+SELECT 
+	test_sessions_lp.landing_page,
+    COUNT(DISTINCT test_sessions_lp.website_session_id) AS sessions,
+    COUNT(DISTINCT test_bounce_sessions.website_session_id) AS bounced_sessions,
+    COUNT(DISTINCT test_bounce_sessions.website_session_id)/COUNT(DISTINCT test_sessions_lp.website_session_id) AS bounce_rate
+FROM
+	test_sessions_lp
+    LEFT JOIN test_bounce_sessions
+    ON test_sessions_lp.website_session_id = test_bounce_sessions.website_session_id
+GROUP BY 
+	test_sessions_lp.landing_page;
+
+-------------------------------------------------------------------------------------------
+-- landing page trend analysis (paid search - non brand, 0601-0831, weekly) 
+-- 1. first website_pageview_id and its revelant sessions
+-- 2. landing page of each session
+-- 3. count of pages per session, to identify bounce sessions
+-- 4. summarizing total sessions and bounce sessions 
+
+SELECT * FROM website_sessions;
+
+-- instructor's solution-------------------------------
+-- merge 2 stpes (min_pv_id and view_counts)
+CREATE TEMPORARY TABLE sessions_min_pv_id_pps
+SELECT
+	website_sessions.website_session_id,
+    MIN(website_pageviews.website_pageview_id) AS first_pv_id,
+    COUNT(DISTINCT website_pageviews.website_pageview_id) AS count_pv
+FROM
+	website_sessions
+    LEFT JOIN website_pageviews
+    ON website_sessions.website_session_id=website_pageviews.website_session_id
+WHERE
+	website_sessions.created_at > '2012-06-01'
+    AND website_sessions.created_at < '2012-08-31'
+    AND utm_source = 'gsearch'
+    AND utm_campaign = 'nonbrand'
+GROUP BY
+	website_sessions.website_session_id;
+
+SELECT * FROM sessions_min_pv_id_pps;
+-- match lp
+CREATE TEMPORARY TABLE sessions_w_counts_lp_created_at
+SELECT
+	sessions_min_pv_id_pps.website_session_id,
+    sessions_min_pv_id_pps.first_pv_id,
+    sessions_min_pv_id_pps.count_pv,
+    website_pageviews.pageview_url AS landing_page,
+    website_pageviews.created_at AS session_created_at
+FROM 
+	sessions_min_pv_id_pps
+    LEFT JOIN website_pageviews
+    ON sessions_min_pv_id_pps.first_pv_id = website_pageviews.website_pageview_id;
+
+select * from sessions_w_counts_lp_created_at;
+
+-- last step
+-- remember to use case then!
+
+SELECT
+	-- YEARWEEK(session_created_at) AS year_week,
+    MIN(DATE(session_created_at)) AS week_start_date,
+    -- COUNT(DISTINCT website_session_id) AS total_sessions,
+    -- COUNT(DISTINCT CASE WHEN count_pv = 1 THEN website_session_id ELSE NULL END) AS bounce_sessions,
+    COUNT(DISTINCT CASE WHEN count_pv = 1 THEN website_session_id ELSE NULL END)/COUNT(DISTINCT website_session_id) AS bounce_rate,
+    COUNT(DISTINCT CASE WHEN landing_page = '/home' THEN website_session_id ELSE NULL END) AS home_sessions,
+    COUNT(DISTINCT CASE WHEN landing_page = '/lander-1' THEN website_session_id ELSE NULL END) AS lander_sessions
+FROM 
+	sessions_w_counts_lp_created_at
+GROUP BY 
+	YEARWEEK(session_created_at);
+-------------------------------------------------------------------------------------------
+-- building conversion funnels
+-- CONTEXT: mini funnel from /lander-1 to /thankyou
+-- GOAL: number of people of each stage and drop rates
+-- STEP
+-- 1.revelant sessions and its pageviews
+-- 2.identify each revelant pageview as the specific funnel step
+-- 3.create session-level conversion funnel view
+-- 4.aggreate the data to access the funnel performance
+
+-- '/lander-1'-'/products'-'/the-original-mr-fuzzy'-'/cart'-'/shipping'-'/billing-2'-'/thank-you-for-your-order'
+select * from website_pageviews where website_session_id = 38172;
+
+-- DROP TABLE session_level_pages;
+
+CREATE TEMPORARY TABLE session_level_pages
+WITH sessions_on_lander AS (
+    SELECT 
+        website_pageviews.website_session_id
+    FROM
+        website_pageviews
+        INNER JOIN
+        website_sessions
+        ON website_sessions.website_session_id=website_pageviews.website_session_id
+    WHERE
+        website_pageviews.pageview_url = '/lander-1'
+        AND website_pageviews.created_at < '2012-09-05'
+        AND website_pageviews.created_at > '2012-08-05'
+        AND website_sessions.utm_source ='gsearch'
+        AND website_sessions.utm_campaign ='nonbrand'
+    GROUP BY 
+        website_pageviews.website_session_id
+)
+
+SELECT 
+    website_pageviews.website_session_id,
+    website_pageviews.pageview_url,
+    website_pageviews.created_at,
+    CASE WHEN pageview_url ='/products' THEN 1 ELSE 0 END AS products_page,
+    CASE WHEN pageview_url ='/the-original-mr-fuzzy' THEN 1 ELSE 0 END AS fuzzy_page,
+    CASE WHEN pageview_url ='/cart' THEN 1 ELSE 0 END AS cart_page,
+    CASE WHEN pageview_url ='/shipping' THEN 1 ELSE 0 END AS shipping_page,
+    CASE WHEN pageview_url ='/billing' THEN 1 ELSE 0 END AS billing_page,
+    CASE WHEN pageview_url ='/thank-you-for-your-order' THEN 1 ELSE 0 END AS thank_page
+FROM
+    website_pageviews
+WHERE
+    website_pageviews.website_session_id IN (
+        SELECT website_session_id 
+        FROM sessions_on_lander
+    )
+    AND website_pageviews.pageview_url IN (
+        '/lander-1',
+        '/products',
+        '/the-original-mr-fuzzy',
+        '/cart',
+        '/shipping',
+        '/billing',
+        '/thank-you-for-your-order'
+    )
+ORDER BY 
+    website_pageviews.website_session_id, 
+    website_pageviews.created_at;
+
+SELECT * FROM session_level_pages;
+
+SELECT
+	website_session_id,
+    MAX(products_page) AS products_page_it,
+    MAX(fuzzy_page) AS fuzzy_page_it,
+    MAX(cart_page) AS cart_page_it,
+    MAX(shipping_page) AS shipping_page_it,
+    MAX(billing_page) AS billing_page_it,
+    MAX(thank_page) AS thank_page_it
+FROM
+	session_level_pages
+GROUP BY 
+	website_session_id;
+
+WITH sessions_funnels AS (
+	SELECT
+	website_session_id,
+    MAX(products_page) AS products_page_it,
+    MAX(fuzzy_page) AS fuzzy_page_it,
+    MAX(cart_page) AS cart_page_it,
+    MAX(shipping_page) AS shipping_page_it,
+    MAX(billing_page) AS billing_page_it,
+    MAX(thank_page) AS thank_page_it
+FROM
+	session_level_pages
+GROUP BY 
+	website_session_id)
+
+SELECT 
+	COUNT(DISTINCT website_session_id) AS sessions,
+    COUNT(DISTINCT CASE WHEN products_page_it = 1 THEN website_session_id ELSE NULL END) AS to_products,
+    COUNT(DISTINCT CASE WHEN fuzzy_page_it = 1 THEN website_session_id ELSE NULL END) AS to_fuzzy,
+	COUNT(DISTINCT CASE WHEN cart_page_it = 1 THEN website_session_id ELSE NULL END) AS to_cart,
+    COUNT(DISTINCT CASE WHEN shipping_page_it = 1 THEN website_session_id ELSE NULL END) AS to_shipping,
+    COUNT(DISTINCT CASE WHEN billing_page_it = 1 THEN website_session_id ELSE NULL END) AS to_billing,
+    COUNT(DISTINCT CASE WHEN thank_page_it = 1 THEN website_session_id ELSE NULL END) AS to_thank
+
+FROM sessions_funnels;
+
+WITH sessions_funnels AS (
+	SELECT
+	website_session_id,
+    MAX(products_page) AS products_page_it,
+    MAX(fuzzy_page) AS fuzzy_page_it,
+    MAX(cart_page) AS cart_page_it,
+    MAX(shipping_page) AS shipping_page_it,
+    MAX(billing_page) AS billing_page_it,
+    MAX(thank_page) AS thank_page_it
+FROM
+	session_level_pages
+GROUP BY 
+	website_session_id)
+
+SELECT 
+	COUNT(DISTINCT website_session_id) AS sessions,
+    
+    COUNT(DISTINCT CASE WHEN products_page_it = 1 THEN website_session_id ELSE NULL END)/COUNT(DISTINCT website_session_id) AS clicked_to_products,
+    COUNT(DISTINCT CASE WHEN fuzzy_page_it = 1 THEN website_session_id ELSE NULL END) /COUNT(DISTINCT CASE WHEN products_page_it = 1 THEN website_session_id ELSE NULL END)AS clicked_to_fuzzy,
+	COUNT(DISTINCT CASE WHEN cart_page_it = 1 THEN website_session_id ELSE NULL END)/COUNT(DISTINCT CASE WHEN fuzzy_page_it = 1 THEN website_session_id ELSE NULL END) AS clicked_to_cart,
+    COUNT(DISTINCT CASE WHEN shipping_page_it = 1 THEN website_session_id ELSE NULL END) /COUNT(DISTINCT CASE WHEN cart_page_it = 1 THEN website_session_id ELSE NULL END) AS clicked_to_shipping,
+    COUNT(DISTINCT CASE WHEN billing_page_it = 1 THEN website_session_id ELSE NULL END)/COUNT(DISTINCT CASE WHEN shipping_page_it = 1 THEN website_session_id ELSE NULL END) AS clicked_to_billing,
+    COUNT(DISTINCT CASE WHEN thank_page_it = 1 THEN website_session_id ELSE NULL END) /COUNT(DISTINCT CASE WHEN billing_page_it = 1 THEN website_session_id ELSE NULL END) AS clicked_to_thank
+
+FROM sessions_funnels;
+
+
+-- conversion rate A/B test on billing page
+
+SELECT * 
+FROM website_pageviews
+WHERE pageview_url='/billing-2'
+ORDER BY created_at;
+
+-- pv_id:53550, created_at:2012-09-10 00:13:05, session_id:25325
+
+CREATE TEMPORARY TABLE session_pages
+WITH sessions_on_lander AS (
+    SELECT 
+        website_pageviews.website_session_id
+    FROM
+        website_pageviews
+        INNER JOIN
+        website_sessions
+        ON website_sessions.website_session_id=website_pageviews.website_session_id
+    WHERE
+        website_pageviews.pageview_url IN ('/billing', '/billing-2')
+        AND website_pageviews.created_at < '2012-11-10'
+        AND website_pageviews.created_at > '2012-09-10'
+    GROUP BY 
+        website_pageviews.website_session_id
+)
+
+SELECT 
+    website_pageviews.website_session_id,
+    website_pageviews.pageview_url,
+    website_pageviews.created_at,
+    CASE WHEN pageview_url ='/billing' THEN 1 ELSE 0 END AS billing_page,
+    CASE WHEN pageview_url ='/billing-2' THEN 1 ELSE 0 END AS billing_2_page,
+    CASE WHEN pageview_url ='/thank-you-for-your-order' THEN 1 ELSE 0 END AS thank_page
+FROM
+    website_pageviews
+WHERE
+    website_pageviews.website_session_id IN (
+        SELECT website_session_id 
+        FROM sessions_on_lander
+    )
+    AND website_pageviews.pageview_url IN (
+        '/billing',
+        '/billing-2',
+        '/thank-you-for-your-order'
+    )
+ORDER BY 
+    website_pageviews.website_session_id, 
+    website_pageviews.created_at;
+
+SELECT * FROM session_pages;
+
+SELECT
+	website_session_id,
+    MAX(billing_page) AS billing_page_it,
+    MAX(billing_2_page) AS billing_2_page_it,
+    MAX(thank_page) AS thank_page_it
+FROM
+	session_pages
+GROUP BY 
+	website_session_id;
+
+WITH sessions_funnels AS (
+		SELECT
+			website_session_id,
+			MAX(billing_page) AS billing_page_it,
+			MAX(billing_2_page) AS billing_2_page_it,
+			MAX(thank_page) AS thank_page_it
+		FROM
+			session_pages
+		GROUP BY 
+			website_session_id)
+
+SELECT 
+	CASE
+        WHEN billing_page_it = 1 THEN 'Billing Page'
+        WHEN billing_2_page_it = 1 THEN 'Billing-2 Page'
+    END AS page,
+	COUNT(DISTINCT website_session_id) AS sessions,
+    COUNT(DISTINCT CASE WHEN billing_page_it = 1 THEN website_session_id ELSE NULL END) AS to_billing,
+    COUNT(DISTINCT CASE WHEN billing_2_page_it = 1 THEN website_session_id ELSE NULL END) AS to_billing_2,
+    COUNT(DISTINCT CASE WHEN thank_page_it = 1 THEN website_session_id ELSE NULL END) AS to_thank
+
+FROM sessions_funnels
+GROUP BY 
+    CASE
+        WHEN billing_page_it = 1 THEN 'Billing Page'
+        WHEN billing_2_page_it = 1 THEN 'Billing-2 Page'END;
+
+
+
+
+
+----------------------------------------------------------------------------------------------------------------------------
+
+-- final result
+WITH sessions_funnels AS (
+		SELECT
+			website_session_id,
+			MAX(billing_page) AS billing_page_it,
+			MAX(billing_2_page) AS billing_2_page_it,
+			MAX(thank_page) AS thank_page_it
+		FROM
+			session_pages
+		GROUP BY 
+			website_session_id)
+
+SELECT 
+	CASE
+        WHEN billing_page_it = 1 THEN 'Billing Page'
+        WHEN billing_2_page_it = 1 THEN 'Billing-2 Page'
+    END AS page,
+	COUNT(DISTINCT website_session_id) AS sessions,
+    COUNT(DISTINCT CASE WHEN thank_page_it = 1 THEN website_session_id ELSE NULL END) AS orders,
+	COUNT(DISTINCT CASE WHEN thank_page_it = 1 THEN website_session_id ELSE NULL END) /COUNT(DISTINCT website_session_id) AS billing_to_orders
+
+FROM sessions_funnels
+GROUP BY 
+    CASE
+        WHEN billing_page_it = 1 THEN 'Billing Page'
+        WHEN billing_2_page_it = 1 THEN 'Billing-2 Page'END;
