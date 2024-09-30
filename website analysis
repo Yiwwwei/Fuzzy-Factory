@@ -606,3 +606,353 @@ GROUP BY
     CASE
         WHEN billing_page_it = 1 THEN 'Billing Page'
         WHEN billing_2_page_it = 1 THEN 'Billing-2 Page'END;
+
+
+
+
+
+
+
+
+-------------------------------------------------------------------------------------------------------------------
+-- conversion rate A/B test on billing page
+
+SELECT * 
+FROM website_pageviews
+WHERE pageview_url='/billing-2'
+ORDER BY created_at;
+
+-- pv_id:53550, created_at:2012-09-10 00:13:05, session_id:25325
+
+CREATE TEMPORARY TABLE session_pages
+WITH sessions_on_lander AS (
+    SELECT 
+        website_pageviews.website_session_id
+    FROM
+        website_pageviews
+        INNER JOIN
+        website_sessions
+        ON website_sessions.website_session_id=website_pageviews.website_session_id
+    WHERE
+        website_pageviews.pageview_url IN ('/billing', '/billing-2')
+        AND website_pageviews.created_at < '2012-11-10'
+        AND website_pageviews.created_at > '2012-09-10'
+    GROUP BY 
+        website_pageviews.website_session_id
+)
+
+SELECT 
+    website_pageviews.website_session_id,
+    website_pageviews.pageview_url,
+    website_pageviews.created_at,
+    CASE WHEN pageview_url ='/billing' THEN 1 ELSE 0 END AS billing_page,
+    CASE WHEN pageview_url ='/billing-2' THEN 1 ELSE 0 END AS billing_2_page,
+    CASE WHEN pageview_url ='/thank-you-for-your-order' THEN 1 ELSE 0 END AS thank_page
+FROM
+    website_pageviews
+WHERE
+    website_pageviews.website_session_id IN (
+        SELECT website_session_id 
+        FROM sessions_on_lander
+    )
+    AND website_pageviews.pageview_url IN (
+        '/billing',
+        '/billing-2',
+        '/thank-you-for-your-order'
+    )
+ORDER BY 
+    website_pageviews.website_session_id, 
+    website_pageviews.created_at;
+
+SELECT * FROM session_pages;
+
+SELECT
+	website_session_id,
+    MAX(billing_page) AS billing_page_it,
+    MAX(billing_2_page) AS billing_2_page_it,
+    MAX(thank_page) AS thank_page_it
+FROM
+	session_pages
+GROUP BY 
+	website_session_id;
+
+WITH sessions_funnels AS (
+		SELECT
+			website_session_id,
+			MAX(billing_page) AS billing_page_it,
+			MAX(billing_2_page) AS billing_2_page_it,
+			MAX(thank_page) AS thank_page_it
+		FROM
+			session_pages
+		GROUP BY 
+			website_session_id)
+
+SELECT 
+	CASE
+        WHEN billing_page_it = 1 THEN 'Billing Page'
+        WHEN billing_2_page_it = 1 THEN 'Billing-2 Page'
+    END AS page,
+	COUNT(DISTINCT website_session_id) AS sessions,
+    COUNT(DISTINCT CASE WHEN billing_page_it = 1 THEN website_session_id ELSE NULL END) AS to_billing,
+    COUNT(DISTINCT CASE WHEN billing_2_page_it = 1 THEN website_session_id ELSE NULL END) AS to_billing_2,
+    COUNT(DISTINCT CASE WHEN thank_page_it = 1 THEN website_session_id ELSE NULL END) AS to_thank
+
+FROM sessions_funnels
+GROUP BY 
+    CASE
+        WHEN billing_page_it = 1 THEN 'Billing Page'
+        WHEN billing_2_page_it = 1 THEN 'Billing-2 Page'END;
+
+
+
+
+
+
+
+-- final result
+WITH sessions_funnels AS (
+		SELECT
+			website_session_id,
+			MAX(billing_page) AS billing_page_it,
+			MAX(billing_2_page) AS billing_2_page_it,
+			MAX(thank_page) AS thank_page_it
+		FROM
+			session_pages
+		GROUP BY 
+			website_session_id)
+
+SELECT 
+	CASE
+        WHEN billing_page_it = 1 THEN 'Billing Page'
+        WHEN billing_2_page_it = 1 THEN 'Billing-2 Page'
+    END AS page,
+	COUNT(DISTINCT website_session_id) AS sessions,
+    COUNT(DISTINCT CASE WHEN thank_page_it = 1 THEN website_session_id ELSE NULL END) AS orders,
+	COUNT(DISTINCT CASE WHEN thank_page_it = 1 THEN website_session_id ELSE NULL END) /COUNT(DISTINCT website_session_id) AS billing_to_orders
+
+FROM sessions_funnels
+GROUP BY 
+    CASE
+        WHEN billing_page_it = 1 THEN 'Billing Page'
+        WHEN billing_2_page_it = 1 THEN 'Billing-2 Page'END;
+
+
+
+
+
+
+
+-- channel portfolio
+-- '2012-08-22' '2012-11-29'
+
+SELECT
+    WEEK(website_sessions.created_at),
+    MIN(DATE(website_sessions.created_at)),
+    COUNT(DISTINCT website_sessions.website_session_id) AS totai_sessions,
+    COUNT(DISTINCT CASE WHEN utm_source='gsearch' THEN website_sessions.website_session_id ELSE NULL END) AS gsearch_sessions,
+    COUNT(DISTINCT CASE WHEN utm_source='bsearch' THEN website_sessions.website_session_id ELSE NULL END) AS bsearch_sessions
+FROM
+	website_sessions
+    LEFT JOIN website_pageviews
+    ON website_sessions.website_session_id=website_pageviews.website_session_id
+WHERE
+	website_sessions.created_at < '2012-11-29'
+    AND website_sessions.created_at > '2012-08-22'
+    AND utm_campaign='nonbrand'
+GROUP BY 
+	1;
+    
+-- % of traffic coming from mobile on gsearch and bsearch 
+SELECT
+	website_sessions.utm_source,
+    COUNT(DISTINCT website_sessions.website_session_id) AS totai_sessions,
+    COUNT(DISTINCT CASE WHEN device_type ='mobile'THEN website_sessions.website_session_id ELSE NULL END) AS mobile_sessions,
+    COUNT(DISTINCT CASE WHEN device_type ='mobile'THEN website_sessions.website_session_id ELSE NULL END) /COUNT(DISTINCT website_sessions.website_session_id) AS pct_mobile
+FROM
+	website_sessions
+    LEFT JOIN website_pageviews
+    ON website_sessions.website_session_id=website_pageviews.website_session_id
+WHERE
+	website_sessions.created_at < '2012-11-30'
+    AND website_sessions.created_at > '2012-08-22'
+    AND utm_campaign='nonbrand'
+GROUP BY 
+	1;
+
+-- cvr by utm_source and device_type
+SELECT
+	website_sessions.device_type,
+    website_sessions.utm_source,
+    COUNT(DISTINCT website_sessions.website_session_id) AS sessions,
+    COUNT(DISTINCT orders.order_id) AS orders,
+    COUNT(DISTINCT orders.order_id)/COUNT(DISTINCT website_sessions.website_session_id) AS cvr
+FROM
+	website_sessions
+    LEFT JOIN orders
+    ON website_sessions.website_session_id=orders.website_session_id
+WHERE
+	website_sessions.created_at < '2012-09-19'
+    AND website_sessions.created_at > '2012-08-22'
+    AND utm_campaign='nonbrand'
+GROUP BY 
+	1,2;
+    
+-- weekly sessions for g/b nonbrand by device_type, > '2012-11-04', <'2012-12-22', b/g percent
+-- note: b/g percent is to show the biding down influence on b, To do this, we try to eliminate extra variables, so we only compare bsearch as a pct of gsearch.
+SELECT
+	-- WEEK(website_sessions.created_at),
+    MIN(DATE(website_sessions.created_at)),
+    COUNT(DISTINCT CASE WHEN utm_source='gsearch' AND device_type ='desktop'THEN website_sessions.website_session_id ELSE NULL END) AS g_desktop_sessions,
+    COUNT(DISTINCT CASE WHEN utm_source='bsearch' AND device_type ='desktop'THEN website_sessions.website_session_id ELSE NULL END) AS b_desktop_sessions,
+    COUNT(DISTINCT CASE WHEN utm_source='bsearch' AND device_type ='desktop'THEN website_sessions.website_session_id ELSE NULL END)/COUNT(DISTINCT CASE WHEN utm_source='gsearch' AND device_type ='desktop'THEN website_sessions.website_session_id ELSE NULL END) AS b_g_desktop_pct,
+    COUNT(DISTINCT CASE WHEN utm_source='gsearch' AND device_type ='mobile'THEN website_sessions.website_session_id ELSE NULL END) AS g_mobile_sessions,
+    COUNT(DISTINCT CASE WHEN utm_source='bsearch' AND device_type ='mobile'THEN website_sessions.website_session_id ELSE NULL END) AS b_mobile_sessions,
+    COUNT(DISTINCT CASE WHEN utm_source='bsearch' AND device_type ='mobile'THEN website_sessions.website_session_id ELSE NULL END)/COUNT(DISTINCT CASE WHEN utm_source='gsearch' AND device_type ='mobile'THEN website_sessions.website_session_id ELSE NULL END) AS b_g_mobile_pct
+FROM
+	website_sessions
+    LEFT JOIN website_pageviews
+    ON website_sessions.website_session_id=website_pageviews.website_session_id
+WHERE
+	website_sessions.created_at < '2012-12-22'
+    AND website_sessions.created_at > '2012-11-04'
+    AND utm_campaign='nonbrand'
+GROUP BY 
+	WEEK(website_sessions.created_at);
+    
+select DISTINCT utm_source, utm_campaign,http_referer from website_sessions 
+where created_at<'2012-12-23';
+
+-- monthly, organic, direct,paid sessions, and show thses sessions as a % of paid nonbrand '2012-12-23'
+-- notes: 
+-- 		utm_campaign = 'nonbrand' --paid nonbrand
+-- 	 	utm_campaign = 'brand'  	paid brand
+-- 		utm_source IS NULL AND http_referer IN ('https://www.gsearch.com','https://www.bsearch.com') - organic search
+-- 		utm_source IS NULL AND http_referer IS NULL -- direct search
+SELECT
+	YEAR(website_sessions.created_at),
+    MONTH(website_sessions.created_at),
+    COUNT(DISTINCT CASE WHEN utm_campaign = 'nonbrand' THEN website_sessions.website_session_id ELSE NULL END) AS nonbrand_sessions,
+    COUNT(DISTINCT CASE WHEN utm_campaign IN ( 'brand', NULL ) THEN website_sessions.website_session_id ELSE NULL END) AS brand_sessions,
+    COUNT(DISTINCT CASE WHEN utm_campaign IN ( 'brand', NULL ) THEN website_sessions.website_session_id ELSE NULL END)/COUNT(DISTINCT CASE WHEN utm_campaign = 'nonbrand' THEN website_sessions.website_session_id ELSE NULL END) AS brand_pct_nonbrand,
+    COUNT(DISTINCT CASE WHEN utm_source IS NULL AND http_referer IN ('https://www.gsearch.com','https://www.bsearch.com') THEN website_sessions.website_session_id ELSE NULL END) AS organic_sessions,
+    COUNT(DISTINCT CASE WHEN utm_source IS NULL AND http_referer IN ('https://www.gsearch.com','https://www.bsearch.com')  THEN website_sessions.website_session_id ELSE NULL END)/COUNT(DISTINCT CASE WHEN utm_campaign = 'nonbrand' THEN website_sessions.website_session_id ELSE NULL END) AS organic_pct_nonbrand,
+    COUNT(DISTINCT CASE WHEN utm_source IS NULL AND http_referer IS NULL THEN website_sessions.website_session_id ELSE NULL END) AS direct_sessions,
+    COUNT(DISTINCT CASE WHEN utm_source IS NULL AND http_referer IS NULL THEN website_sessions.website_session_id ELSE NULL END) /COUNT(DISTINCT CASE WHEN utm_campaign = 'nonbrand' THEN website_sessions.website_session_id ELSE NULL END) AS direct_pct_nonbrand
+    
+FROM
+	website_sessions
+WHERE
+	website_sessions.created_at < '2012-12-23'
+GROUP BY 
+	1,2;
+
+
+-- another solution: 
+WITH session_counts AS (
+    SELECT
+        website_sessions.website_session_id,
+        YEAR(website_sessions.created_at) AS session_year,
+        MONTH(website_sessions.created_at) AS session_month,
+        CASE 
+            WHEN utm_campaign = 'nonbrand' THEN 1 
+            ELSE 0 
+        END AS nonbrand_session,
+        CASE 
+            WHEN utm_campaign = 'brand' THEN 1 
+            ELSE 0 
+        END AS brand_session,
+        CASE 
+            WHEN utm_source IS NULL AND http_referer IN ('https://www.gsearch.com', 'https://www.bsearch.com') THEN 1 
+            ELSE 0 
+        END AS organic_session,
+        CASE 
+            WHEN utm_source IS NULL AND http_referer IS NULL THEN 1 
+            ELSE 0 
+        END AS direct_session
+    FROM 
+        website_sessions
+    WHERE
+        website_sessions.created_at < '2012-12-23'
+)
+
+SELECT
+    session_year,
+    session_month,
+    COUNT(DISTINCT CASE WHEN nonbrand_session = 1 THEN website_session_id ELSE NULL END) AS nonbrand_sessions,
+    COUNT(DISTINCT CASE WHEN brand_session = 1 THEN website_session_id ELSE NULL END) AS brand_sessions,
+    COUNT(DISTINCT CASE WHEN brand_session = 1 THEN website_session_id ELSE NULL END) * 100.0 / NULLIF(COUNT(DISTINCT CASE WHEN nonbrand_session = 1 THEN website_session_id ELSE NULL END), 0) AS brand_pct_nonbrand,
+    COUNT(DISTINCT CASE WHEN organic_session = 1 THEN website_session_id ELSE NULL END) AS organic_sessions,
+    COUNT(DISTINCT CASE WHEN organic_session = 1 THEN website_session_id ELSE NULL END) * 100.0 / NULLIF(COUNT(DISTINCT CASE WHEN nonbrand_session = 1 THEN website_session_id ELSE NULL END), 0) AS organic_pct_nonbrand,
+    COUNT(DISTINCT CASE WHEN direct_session = 1 THEN website_session_id ELSE NULL END) AS direct_sessions,
+    COUNT(DISTINCT CASE WHEN direct_session = 1 THEN website_session_id ELSE NULL END) * 100.0 / NULLIF(COUNT(DISTINCT CASE WHEN nonbrand_session = 1 THEN website_session_id ELSE NULL END), 0) AS direct_pct_nonbrand
+FROM 
+    session_counts
+GROUP BY
+    session_year, session_month
+ORDER BY
+    session_year, session_month;
+
+
+----------------------------------------------------
+
+-- sesaonality
+-- monthly and weekly sessions to orders
+SELECT
+    YEAR(website_sessions.created_at) AS yr,
+    MONTH(website_sessions.created_at) AS mo,
+    COUNT(DISTINCT website_sessions.website_session_id) AS totai_sessions,
+    COUNT(DISTINCT orders.order_id) AS orders
+FROM
+	website_sessions
+    LEFT JOIN orders
+    ON website_sessions.website_session_id=orders.website_session_id
+WHERE
+	website_sessions.created_at < '2013-01-01'
+GROUP BY 
+	1,2;
+
+SELECT
+    WEEK(website_sessions.created_at) AS mo,
+    MIN(DATE(website_sessions.created_at)),
+    COUNT(DISTINCT website_sessions.website_session_id) AS totai_sessions,
+    COUNT(DISTINCT orders.order_id) AS orders
+FROM
+	website_sessions
+    LEFT JOIN orders
+    ON website_sessions.website_session_id=orders.website_session_id
+WHERE
+	website_sessions.created_at < '2013-01-01'
+GROUP BY 
+	YEAR(website_sessions.created_at),
+    WEEK(website_sessions.created_at);
+
+
+-- average sessions volume, by hour of the day and by dayweek '2012-09-15' '2012-11-15'
+WITH session_counts AS (
+	SELECT
+		DATE(website_sessions.created_at) AS created_at,
+        WEEKDAY(website_sessions.created_at) AS wekday,
+        HOUR(website_sessions.created_at) AS hr,
+		COUNT(DISTINCT website_sessions.website_session_id) AS sessions
+	FROM website_sessions
+    WHERE
+		website_sessions.created_at < '2012-11-15'
+		AND website_sessions.created_at > '2012-09-15'
+	GROUP BY
+		1,2,3)
+SELECT
+    hr,
+    ROUND(AVG(CASE WHEN wekday = 0 THEN sessions ELSE NULL END ),1) AS mon,
+    ROUND(AVG(CASE WHEN wekday = 1 THEN sessions ELSE NULL END ),1) AS tue,
+    ROUND(AVG(CASE WHEN wekday = 2 THEN sessions ELSE NULL END ),1) AS wed,
+    ROUND(AVG(CASE WHEN wekday = 3 THEN sessions ELSE NULL END ),1) AS thu,
+    ROUND(AVG(CASE WHEN wekday = 4 THEN sessions ELSE NULL END ),1) AS fri,
+    ROUND(AVG(CASE WHEN wekday = 5 THEN sessions ELSE NULL END ),1) AS sat,
+    ROUND(AVG(CASE WHEN wekday = 6 THEN sessions ELSE NULL END ),1) AS sun
+FROM
+	session_counts
+GROUP BY 
+	1
+Order By
+	1;
+    
